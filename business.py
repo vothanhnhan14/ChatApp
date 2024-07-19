@@ -38,9 +38,8 @@ class Configuration:
         self.server_addresses = server_addresses        
     
 class ServerInfo:
-    def __init__(self, address, port):    
-        self.ip_address = address
-        self.port = port
+    def __init__(self, ip_address):    
+        self.ip_address = ip_address
         self.queue = Queue()
         self.members_info = []
         self.time_check_alive = time.time() + 5
@@ -68,9 +67,12 @@ class BusinessHandler:
     async def send_check(self, websocket):    
         try: 
             await websocket.send('{"tag": "check"}')
-            return await websocket.recv()
+            response = json.loads(await websocket.recv())
+            if 'tag' in response and response['tag'] == 'checked':
+                return 'online'
+            return 'suspend'
         except Exception as ex:
-            return None
+            return 'suspend'
         
     async def send_attendance(self, websocket):  
         await websocket.send('{"tag": "attendance"}')

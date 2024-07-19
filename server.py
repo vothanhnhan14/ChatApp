@@ -26,32 +26,41 @@ async def handle_client(websocket, path):
 
 async def connect_server(uri):
     successed_connect = False
-    address = uri[uri.index("//") + 2:uri.rindex(":")]
-    port = int(uri[uri.rindex(":") + 1:])
+    server_ip_address = uri[uri.index("//") + 2:uri.rindex(":")]
     while not successed_connect:
         try:
-            async with websockets.connect(uri, ping_interval=60, ping_timeout=180) as websocket:
+            async with websockets.connect(uri) as websocket:
                 print('Connect ' + uri + ' success')
                 global business_handler
                 successed_connect = True
-                server = ServerInfo(address, port)
-                business_handler.servers[address] = server
+                if server_ip_address not in business_handler.servers:
+                    server = ServerInfo(server_ip_address)
+                    business_handler.servers[server_ip_address] = server
+
+                server = business_handler.servers[server_ip_address]    
+                server.members_info = []
                 members = await business_handler.send_attendance(websocket)
                 server.members_info.extend(members)
-
+                count_suspend = 0
                 while True:
                     if server.time_check_alive < time.time():
                         response = await business_handler.send_check(websocket)
-                        server.status = 'online' if response else 'offline'
+                        if response != 'online':
+                            count_suspend += 1
+                            if count_suspend > 3:
+                                successed_connect = False
+                                break
+                        server.status = response
                         server.time_check_alive += 5
                     if server.status == 'online' and not server.queue.is_empty():
+                        count_suspend = 0
                         message = server.queue.pop() 
                         await websocket.send(message)   
                     await asyncio.sleep(0.5)    
                 
         except Exception as ex:
-            if not successed_connect:
-                await asyncio.sleep(2)
+            await asyncio.sleep(1)
+            successed_connect = False    
             
 async def connect_other_servers():
     global config

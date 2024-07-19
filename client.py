@@ -13,21 +13,53 @@ import base64
 import yaml
 
 def generate_pair_keys():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)  
-    public_key = private_key.public_key()
+    jid = sys.argv[1]
+    file_id = jid[0:jid.index('@')]
+    if os.path.exists(file_id + "_private_key"):
+        with open(file_id + "_private_key") as file:
+            private_key = serialization.load_pem_private_key(file.read().encode(), password=None)
+        with open(file_id + "_public_key.pub") as file:
+            public_key = serialization.load_pem_public_key(file.read().encode()) 
+    else:           
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)  
+        public_key = private_key.public_key()
+        with open(file_id  + "_private_key", 'w') as file:
+            privatekey = private_key.private_bytes(
+                                        encoding=serialization.Encoding.PEM,
+                                        format=serialization.PrivateFormat.TraditionalOpenSSL,
+                                        encryption_algorithm=serialization.NoEncryption())
+            file.write(privatekey.decode())
+        with open(file_id + "_public_key.pub", 'w') as file:
+            publickey = public_key.public_bytes(
+                                        encoding=serialization.Encoding.PEM,
+                                        format=serialization.PublicFormat.SubjectPublicKeyInfo)
+            file.write(publickey.decode())
+    
     return private_key, public_key
 
 def to_member(m):
     return Member(m['jid'], m['nickname'], None, serialization.load_pem_public_key(m['publickey'].encode()))
 
+def split(bytes, chunk_size):
+    limit = len(bytes)
+    return [bytes[i:i + chunk_size if i + chunk_size < limit else limit] for i in range(0, limit, chunk_size)]
+
 async def encrypt(public_key, message):
+    global padder
     if type(message) is str:
         message = message.encode()
-    return base64.b64encode(public_key.encrypt(message, encrypter)).decode()
+    cipher_text = b""
+    for chunk in split(message, 190):
+        cipher_text += public_key.encrypt(chunk, padder)    
+    return base64.b64encode(cipher_text).decode()
 
 async def decrypt(private_key, cipher_text, to_string=True):
-    content = private_key.decrypt(base64.b64decode(cipher_text.encode()), decypter)
-    return content.decode() if to_string else content
+    global padder
+    cipher_text = base64.b64decode(cipher_text.encode())
+    text = b''
+    for chunk in split(cipher_text, 256):
+        text += private_key.decrypt(chunk, padder)
+    return text.decode() if to_string else text
 
 async def join(websocket):
     global client
@@ -107,6 +139,7 @@ async def send_file(target, file_path, websocket):
 
 async def connect():
     global all_members, replies, queue, connected
+
     with open('config.yaml') as file:
         config = yaml.safe_load(file)
     uri = f"ws://{config['localServer']['ipAddress']}:{config['localServer']['port']}"
@@ -144,8 +177,7 @@ all_members = []
 queue = Queue()
 replies = []
 lock = threading.Lock()
-encrypter = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)  
-decypter = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),  algorithm=hashes.SHA256(), label=None)  
+padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None)    
 connected = -1 # -1: connection initialize, 0: connect failed, 1: connect successful, 2: connection closed
 
 def connect_server():
@@ -169,7 +201,8 @@ def main():
 
     print("Command(1 -> View members, 2 -> Chat, 3 -> Transfer file, 4 -> View messages, 5 -> Exit)")
     while connected == 1:
-        command = int(input('Enter your command: '))
+        instruction = input('> ')
+        command = int(instruction if ":" not in instruction else instruction[0:instruction.index(":")])
         if command == 1:
             with lock:
                 for m in all_members.values():
@@ -181,7 +214,7 @@ def main():
                         print(f"Message from {reply['from']}: {reply['info']}")
                     replies = []        
         elif command == 2:
-            message = input('Input with format jid:content > ')
+            message = instruction[instruction.index(":") + 1:]
             if len(message.strip()) > 0:
                 target = message[:message.index(':')]
                 with lock:
@@ -191,7 +224,7 @@ def main():
                 content = message[message.index(':') + 1:].strip()   
                 queue.push((target, content, None))
         elif command == 3:
-            message = input('Input with format jid:file path > ')
+            message = instruction[instruction.index(":") + 1:]
             if len(message.strip()) > 0:
                 target = message[:message.index(':')]
                 content = message[message.index(':') + 1:].strip()   
