@@ -1,9 +1,9 @@
 localServer:
-  domain: s2
+  domain: s11
   ipAddress: 127.0.0.1
-  port: 4321
+  port: 1234
 
 groupServers:
   - ipAddress: 127.0.0.1
-    domain: s11
-    port: 1234
+    domain: s2
+    port: 4321

@@ -15,21 +15,23 @@ import yaml
 def generate_pair_keys():
     jid = sys.argv[1]
     file_id = jid[0:jid.index('@')]
-    if os.path.exists(file_id + "_private_key"):
-        with open(file_id + "_private_key") as file:
+    if os.path.exists('./keys/' + file_id + "_private_key"):
+        with open('./keys/' + file_id + "_private_key") as file:
             private_key = serialization.load_pem_private_key(file.read().encode(), password=None)
-        with open(file_id + "_public_key.pub") as file:
+        with open('./keys/' + file_id + "_public_key.pub") as file:
             public_key = serialization.load_pem_public_key(file.read().encode()) 
     else:           
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)  
         public_key = private_key.public_key()
-        with open(file_id  + "_private_key", 'w') as file:
+        if not os.path.exists("./keys"):
+            os.mkdir('./keys')
+        with open('./keys/' + file_id  + "_private_key", 'w') as file:
             privatekey = private_key.private_bytes(
                                         encoding=serialization.Encoding.PEM,
                                         format=serialization.PrivateFormat.TraditionalOpenSSL,
                                         encryption_algorithm=serialization.NoEncryption())
             file.write(privatekey.decode())
-        with open(file_id + "_public_key.pub", 'w') as file:
+        with open('./keys/' + file_id + "_public_key.pub", 'w') as file:
             publickey = public_key.public_bytes(
                                         encoding=serialization.Encoding.PEM,
                                         format=serialization.PublicFormat.SubjectPublicKeyInfo)
