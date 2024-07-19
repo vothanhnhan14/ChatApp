@@ -11,9 +11,10 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives import serialization 
 import base64
 import yaml
+import traceback
 
 def generate_pair_keys():
-    jid = sys.argv[1]
+    global jid
     file_id = jid[0:jid.index('@')]
     if os.path.exists('./keys/' + file_id + "_private_key"):
         with open('./keys/' + file_id + "_private_key") as file:
@@ -90,10 +91,10 @@ async def get_replies(websocket):
     messages = json.loads(await websocket.recv())
     for message in messages:
         if message['tag'] == 'message':
-            message['info'] = await decrypt(client.private_key, message['info'])
+            message['info'] = message['info'] if message['to'] == 'public' else await decrypt(client.private_key, message['info'])
         elif message['tag'] == 'file':
             file_name = message['filename']
-            file_content = await decrypt(client.private_key, message['info'], to_string=False)
+            file_content = message['info'].encode() if message['to'] == 'public' else await decrypt(client.private_key, message['info'], to_string=False)
             with open(file_name, 'wb') as file:
                 file.write(file_content)
             message['info'] = f'You received a file {file_name}'     
@@ -118,7 +119,7 @@ async def send_message(target, content, websocket):
         'tag': 'send_message',
         'from': client.jid,
         'to': target,
-        'info': await encrypt(all_members[target].public_key, content)
+        'info': content if target == 'public' else await encrypt(all_members[target].public_key, content)
     }
     await websocket.send(json.dumps(message))
 
@@ -126,9 +127,10 @@ async def send_file(target, file_path, websocket):
     global client, all_members
     with open(file_path, 'rb') as file:
         file_content = file.read()
-    with lock:    
-        public_key = all_members[target].public_key
-    file_content = await encrypt(public_key, file_content)    
+    if target != 'public':    
+        with lock:    
+            public_key = all_members[target].public_key
+    file_content = file_content.decode() if target == 'public' else await encrypt(public_key, file_content)    
     message = {
         'tag': 'send_file',
         'from': client.jid,
@@ -147,15 +149,14 @@ async def connect():
     uri = f"ws://{config['localServer']['ipAddress']}:{config['localServer']['port']}"
     # we will update members information each 1 seconds
     time_update_members = time.time() + 1
-    try:
-        async with websockets.connect(uri) as websocket:
-            connected = await join(websocket)
-            while connected == 1:
+    async with websockets.connect(uri) as websocket:
+        connected = await join(websocket)
+        while connected == 1:
+            try:
                 if time.time() >= time_update_members:
                     await get_members(websocket)
                     time_update_members = time.time() + 1
-                message_replies = await get_replies(websocket)
-                
+                message_replies = await get_replies(websocket)                
                 if len(message_replies) > 0:
                     with lock:
                         replies.extend(message_replies)
@@ -166,14 +167,14 @@ async def connect():
                     else:
                         await send_message(target, content, websocket)     
                 await asyncio.sleep(0.2)
-    except Exception as ex:
-        if type(ex) == websockets.ConnectionClosedOK:
-            print('Server closed connection!')
-            exit(0)
-        else:
-            print(f'Error: {type(ex).__name__}')         
-
-
+            except Exception as ex:
+                if 'ConnectionClosed' in type(ex).__name__:
+                    print('Server closed connection!')
+                    return
+                else:
+                    traceback.print_exc(ex)
+                    print(f'Error: {type(ex).__name__}') 
+            
 client = None
 all_members = []
 queue = Queue()
@@ -181,15 +182,56 @@ replies = []
 lock = threading.Lock()
 padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None)    
 connected = -1 # -1: connection initialize, 0: connect failed, 1: connect successful, 2: connection closed
+jid = sys.argv[1]
+nickname = sys.argv[2] if len(sys.argv) > 2 else ''
 
 def connect_server():
-    global client
+    global client, jid, nickname
     private_key, public_key = generate_pair_keys()
-    client = Member(jid = sys.argv[1], 
-                    nickname = sys.argv[2] if len(sys.argv) > 2 else '',
+    client = Member(jid = jid, 
+                    nickname = nickname,
                     private_key = private_key,
                     public_key = public_key)
     asyncio.run(connect())
+
+def view_members():
+    global all_members
+    with lock:
+        for m in all_members.values():
+            print("jid: " + m.jid + ", nickname: " + m.nickname)
+
+def chat(instruction):
+    message = instruction[instruction.index(":") + 1:]
+    if len(message.strip()) > 0:
+        target = message[:message.index(':')]
+        with lock:
+            if target not in all_members and target != 'public':
+                print(f'{target} is either offline or not exist!')
+                return
+        content = message[message.index(':') + 1:].strip()   
+        queue.push((target, content, None))
+
+def transfer_file(instruction):
+    global queue
+    message = instruction[instruction.index(":") + 1:]
+    if len(message.strip()) > 0:
+        target = message[:message.index(':')]
+        with lock:
+            if target not in all_members and target != 'public':
+                print(f'{target} is either offline or not exist!')
+                return
+        content = message[message.index(':') + 1:].strip()   
+        queue.push((target, content, True))
+
+def view_incoming_messages():
+    global lock, replies
+    with lock:
+        if len(replies) > 0:
+            for reply in replies:
+                print(f"Message from {reply['from']}{' to public' if reply['to'] == 'public' else ''}: {reply['info']}")
+            replies = []  
+        else:
+            print("You don't have any message")  
 
 def main():
     global queue, replies, connected
@@ -206,31 +248,13 @@ def main():
         instruction = input('> ')
         command = int(instruction if ":" not in instruction else instruction[0:instruction.index(":")])
         if command == 1:
-            with lock:
-                for m in all_members.values():
-                    print("jid: " + m.jid + ", nickname: " + m.nickname)
+            view_members()
         elif command == 4:
-            with lock:
-                if len(replies) > 0:
-                    for reply in replies:
-                        print(f"Message from {reply['from']}: {reply['info']}")
-                    replies = []        
+            view_incoming_messages()        
         elif command == 2:
-            message = instruction[instruction.index(":") + 1:]
-            if len(message.strip()) > 0:
-                target = message[:message.index(':')]
-                with lock:
-                    if target not in all_members:
-                        print(f'{target} is either offline or not exist!')
-                        continue
-                content = message[message.index(':') + 1:].strip()   
-                queue.push((target, content, None))
+            chat(instruction)
         elif command == 3:
-            message = instruction[instruction.index(":") + 1:]
-            if len(message.strip()) > 0:
-                target = message[:message.index(':')]
-                content = message[message.index(':') + 1:].strip()   
-                queue.push((target, content, True))   
+            transfer_file(instruction)   
         elif command == 5:
             connected = 2             
 

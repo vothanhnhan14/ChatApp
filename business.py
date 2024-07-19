@@ -76,7 +76,7 @@ class BusinessHandler:
         
     async def send_attendance(self, websocket):  
         await websocket.send('{"tag": "attendance"}')
-        response = json.loads(await websocket.recv())
+        response = json.loads(await websocket.recv())       
         return response['presence']
 
     async def _members_changed(self, request, websocket):
@@ -84,7 +84,7 @@ class BusinessHandler:
     
     async def _server_join(self, request, websocket):
         message = await self._create_precense_message()
-        await websocket.send(message)    
+        await websocket.send(message)
 
     async def _send_message(self, request, websocket):
         request['tag'] = 'message'
@@ -98,31 +98,36 @@ class BusinessHandler:
         to = request['to']
         for server in self.servers.values():
             for m in server.members_info:
-                if m['jid'] == to:
+                if m['jid'] == to or to == 'public':
                     server.queue.push(json.dumps(request))
-                    return
-                
-        for local_client in self.clients.values():        
-            if local_client['jid'] == to:
-                if to in self.replies:
-                    self.replies[to].append(request)
-                else:
-                    self.replies[to] = [request]
-                return            
+                    if to != 'public':
+                        return
+
+        for local_client in self.clients.values():  
+            local_jid = local_client['jid']      
+            if local_jid == to or to == 'public':
+                if to != 'public' or request['from'] != local_jid:
+                    self.replies[local_jid].append(request)
+                if to != 'public':
+                    return            
 
     async def _get_replies(self, request, websocket):    
         jid = request['to']
         replies = self.replies.pop(jid, [])
+        self.replies[jid] = []
         await websocket.send(json.dumps(replies))
 
     async def _receive_message(self, message, websocket):  
         jid = message['to']
-        if jid in self.replies:
-            self.replies[jid].append(message)
+        if jid == 'public':
+            for local_jid in self.replies:
+                self.replies[local_jid].append(message)      
         else:
-            self.replies[jid] = [message]     
+            if jid in self.replies:
+                self.replies[jid].append(message)
+            else:
+                self.replies[jid] = [message]           
              
-
     def find_request_processor(self, request):
         if request['tag'] in self.processors:
             return self.processors[request['tag']]
@@ -151,6 +156,7 @@ class BusinessHandler:
         
         await websocket.send('OK')
         self.clients[websocket.remote_address] = client
+        self.replies[client['jid']] = []
         precense_message = await self._create_precense_message()
         await self._broadcast(precense_message)
 
@@ -176,7 +182,9 @@ class BusinessHandler:
         await websocket.send(json.dumps(members))     
 
     async def _create_precense_message(self):
-        clients_info = [{"nickname": c['nickname'], "jid": c['jid'], "publickey": c['publickey']} for c in self.clients.values()]
+        clients_info = [{"nickname": c['nickname'], 
+                         "jid": c['jid'], 
+                         "publickey": c['publickey']} for c in self.clients.values()]
         return json.dumps({
             "tag": "presence",
             "presence": clients_info
