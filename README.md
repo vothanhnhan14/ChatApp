@@ -62,5 +62,53 @@ So to view members in the system you enter 1, to view is there any incomming mes
 To send a chat content 'Hi, How are you?' to another member user1@s2 ,for example, you enter 2:user1@s2:Hi, How are you?  
 To transfer a file which in path '../folder1/file.txt' to another member user2@s5 ,for example, you enter 3:user2@s5:../folder1/file.txt.  
 
+#### 5. How to debug  
+You can use VS code to debug our code. If you want to simulate an environment two servers, each server have one member you can do as bellow:
+1. create 4 folder server1, server2, user1, user2
+2. copy the source code in to fours above folder
+3. open one terminal, go to folder server1, run: python server.py register. Then create a new member, for example, user1 for server1. After finishing register members, open config.yaml, modified it as below: 
+```
+localServer:
+  domain: s1
+  ipAddress: 127.0.0.1
+  port: 1234
+
+groupServers:
+  - ipAddress: 127.0.0.1
+    port: 4321
+    domain: s2  
+```
+Then run: python server.py  
+
+- open one terminal, go to folder server2, run: python server.py register. Then create a new member, for example, user2 for server2.After finishing register members, open config.yaml, modified it as below: 
+```
+localServer:
+  domain: s2
+  ipAddress: 127.0.0.1
+  port: 4321
+
+groupServers:
+  - ipAddress: 127.0.0.1
+    port: 1234
+    domain: s1
+```
+Then run: python server.py  
+
+4. open one terminal, go to folder user1, update the config.yml as below:
+```
+localServer:
+  domain: s1
+  ipAddress: 127.0.0.1
+  port: 1234
+```
+Then run: python client.py user1@s1
+5. open one terminal, go to folder user2, update the config.yml as below:
+```
+localServer:
+  domain: s2
+  ipAddress: 127.0.0.1
+  port: 4321
+```
+Then run: python client.py user2@s2  
   
 That's it  
