@@ -1,3 +1,6 @@
+############################################################
+## Author: Thanh Nhan Vo, Yijia Liu, Yulong Wei, Congyao Bai
+############################################################
 import helper
 import asyncio
 import websockets

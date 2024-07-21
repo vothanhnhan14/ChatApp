@@ -1,3 +1,7 @@
+############################################################
+## Author: Thanh Nhan Vo, Yijia Liu, Yulong Wei, Congyao Bai
+############################################################
+
 from helper import *
 import helper
 import asyncio

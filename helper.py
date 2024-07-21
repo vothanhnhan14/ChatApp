@@ -1,3 +1,6 @@
+############################################################
+## Author: Thanh Nhan Vo, Yijia Liu, Yulong Wei, Congyao Bai
+############################################################
 import asyncio
 import websockets
 import yaml   
