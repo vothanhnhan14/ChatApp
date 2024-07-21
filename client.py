@@ -1,3 +1,4 @@
+from helper import *
 import asyncio
 import websockets
 import sys
@@ -6,80 +7,54 @@ import json
 import time
 import threading
 from business import Queue, Member
-from cryptography.hazmat.primitives import hashes   
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa  
 from cryptography.hazmat.primitives import serialization 
 import base64
 import yaml
 import traceback
+from getpass import getpass
+from cryptography.fernet import Fernet
 
-def generate_pair_keys():
-    global jid
-    file_id = jid[0:jid.index('@')]
-    if os.path.exists('./keys/' + file_id + "_private_key"):
-        with open('./keys/' + file_id + "_private_key") as file:
-            private_key = serialization.load_pem_private_key(file.read().encode(), password=None)
-        with open('./keys/' + file_id + "_public_key.pub") as file:
-            public_key = serialization.load_pem_public_key(file.read().encode()) 
-    else:           
-        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)  
-        public_key = private_key.public_key()
-        if not os.path.exists("./keys"):
-            os.mkdir('./keys')
-        with open('./keys/' + file_id  + "_private_key", 'w') as file:
-            privatekey = private_key.private_bytes(
-                                        encoding=serialization.Encoding.PEM,
-                                        format=serialization.PrivateFormat.TraditionalOpenSSL,
-                                        encryption_algorithm=serialization.NoEncryption())
-            file.write(privatekey.decode())
-        with open('./keys/' + file_id + "_public_key.pub", 'w') as file:
-            publickey = public_key.public_bytes(
-                                        encoding=serialization.Encoding.PEM,
-                                        format=serialization.PublicFormat.SubjectPublicKeyInfo)
-            file.write(publickey.decode())
-    
-    return private_key, public_key
+client = None
+all_members = []
+queue = Queue()
+replies = []
+lock = threading.Lock()   
+connected = -1 # -1: connection initialize, 0: connect failed, 1: connect successful, 2: connection closed
+jid = sys.argv[1]
+nickname = sys.argv[2] if len(sys.argv) > 2 else ''
+password = ''
+
 
 def to_member(m):
-    return Member(m['jid'], m['nickname'], None, serialization.load_pem_public_key(m['publickey'].encode()))
-
-def split(bytes, chunk_size):
-    limit = len(bytes)
-    return [bytes[i:i + chunk_size if i + chunk_size < limit else limit] for i in range(0, limit, chunk_size)]
-
-async def encrypt(public_key, message):
-    global padder
-    if type(message) is str:
-        message = message.encode()
-    cipher_text = b""
-    for chunk in split(message, 190):
-        cipher_text += public_key.encrypt(chunk, padder)    
-    return base64.b64encode(cipher_text).decode()
-
-async def decrypt(private_key, cipher_text, to_string=True):
-    global padder
-    cipher_text = base64.b64decode(cipher_text.encode())
-    text = b''
-    for chunk in split(cipher_text, 256):
-        text += private_key.decrypt(chunk, padder)
-    return text.decode() if to_string else text
+    try:
+        return Member(m['jid'], m['nickname'], None, serialization.load_pem_public_key(m['publickey'].encode()))
+    except Exception as ex:
+        # print(f"Member error: {m}")
+        return None
 
 async def join(websocket):
-    global client
+    global client, password
     public_key_pem = client.public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        format=serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    await websocket.send(json.dumps({'tag': 'login', 'info': public_key_pem}))
+    response = json.loads(await decrypt(client.private_key, await websocket.recv(), padder))
     message = {
         'tag': 'join',
         'info': {
             'nickname': client.nickname,
             'jid': client.jid,
-            'publickey': public_key_pem.decode()
+            'password': password,
+            'publickey': public_key_pem
         }
     }
-    await websocket.send(json.dumps(message))
-    response = await websocket.recv()
-    return 1 if response == 'OK' else 0
+    await websocket.send(Fernet(response['key']).encrypt(json.dumps(message).encode()))
+    # print detail login information
+    ok = await websocket.recv()
+    print(response['moreInfo'])
+    return 1 if ok == 'OK' else 0
 
 async def get_replies(websocket):
     global client
@@ -91,10 +66,10 @@ async def get_replies(websocket):
     messages = json.loads(await websocket.recv())
     for message in messages:
         if message['tag'] == 'message':
-            message['info'] = message['info'] if message['to'] == 'public' else await decrypt(client.private_key, message['info'])
+            message['info'] = message['info'] if message['to'] == 'public' else await decrypt(client.private_key, message['info'], padder)
         elif message['tag'] == 'file':
             file_name = message['filename']
-            file_content = message['info'].encode() if message['to'] == 'public' else await decrypt(client.private_key, message['info'], to_string=False)
+            file_content = message['info'].encode() if message['to'] == 'public' else await decrypt(client.private_key, message['info'], padder, to_string=False)
             with open(file_name, 'wb') as file:
                 file.write(file_content)
             message['info'] = f'You received a file {file_name}'     
@@ -109,7 +84,9 @@ async def get_members(websocket):
     members_list = {}
     for server_members in members.values():
         for m in server_members:
-            members_list[m['jid']] = to_member(m)
+            member = to_member(m)
+            if member:
+                members_list[m['jid']] = member
     with lock:
         all_members = members_list        
 
@@ -119,7 +96,7 @@ async def send_message(target, content, websocket):
         'tag': 'send_message',
         'from': client.jid,
         'to': target,
-        'info': content if target == 'public' else await encrypt(all_members[target].public_key, content)
+        'info': content if target == 'public' else await encrypt(all_members[target].public_key, content, padder)
     }
     await websocket.send(json.dumps(message))
 
@@ -130,7 +107,7 @@ async def send_file(target, file_path, websocket):
     if target != 'public':    
         with lock:    
             public_key = all_members[target].public_key
-    file_content = file_content.decode() if target == 'public' else await encrypt(public_key, file_content)    
+    file_content = file_content.decode() if target == 'public' else await encrypt(public_key, file_content, padder)    
     message = {
         'tag': 'send_file',
         'from': client.jid,
@@ -142,10 +119,8 @@ async def send_file(target, file_path, websocket):
     await websocket.send(json.dumps(message))    
 
 async def connect():
-    global all_members, replies, queue, connected
+    global all_members, replies, queue, connected,config
 
-    with open('config.yaml') as file:
-        config = yaml.safe_load(file)
     uri = f"ws://{config['localServer']['ipAddress']}:{config['localServer']['port']}"
     # we will update members information each 1 seconds
     time_update_members = time.time() + 1
@@ -175,19 +150,9 @@ async def connect():
                     traceback.print_exc(ex)
                     print(f'Error: {type(ex).__name__}') 
             
-client = None
-all_members = []
-queue = Queue()
-replies = []
-lock = threading.Lock()
-padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None)    
-connected = -1 # -1: connection initialize, 0: connect failed, 1: connect successful, 2: connection closed
-jid = sys.argv[1]
-nickname = sys.argv[2] if len(sys.argv) > 2 else ''
-
 def connect_server():
     global client, jid, nickname
-    private_key, public_key = generate_pair_keys()
+    private_key, public_key = generate_pair_keys(jid)
     client = Member(jid = jid, 
                     nickname = nickname,
                     private_key = private_key,
@@ -259,6 +224,7 @@ def main():
             connected = 2             
 
 if __name__ == "__main__":
+    password = getpass(prompt='Enter password: ')
     t = threading.Thread(target=connect_server)
     t.start()
     main()

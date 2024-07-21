@@ -1,9 +1,29 @@
 localServer:
-  domain: s11
-  ipAddress: 127.0.0.1
-  port: 1234
+  domain: s1
+  ipAddress: 127.0.0.1  
+  port: 4321
 
 groupServers:
-  - ipAddress: 127.0.0.1
-    domain: s2
-    port: 4321
+  - ipAddress: 127.0.0.1  
+    port: 1234
+    domain: s11
+
+# groupServers:
+#   - ipAddress: 10.13.84.131
+#     domain: s0
+#     port: 5555
+#   # - ipAddress: 10.13.83.163
+#   #   domain: s3
+#   #   port: 5555
+#   - ipAddress: 10.13.101.145
+#     domain: s4
+#     port: 5555  
+#   - ipAddress: 10.13.81.121
+#     domain: s6
+#     port: 5555
+#   # - ipAddress: 10.13.89.245
+#   #   domain: s2
+#   #   port: 5555   
+#   - ipAddress: 10.13.97.12
+#     domain: s8
+#     port: 5555    

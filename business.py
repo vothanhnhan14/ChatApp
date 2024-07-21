@@ -1,3 +1,5 @@
+from helper import *
+import helper
 import asyncio
 import websockets
 import time
@@ -6,6 +8,10 @@ import threading
 from cryptography.hazmat.primitives import hashes   
 from cryptography.hazmat.primitives.asymmetric import padding, rsa  
 from cryptography.hazmat.primitives import serialization 
+import os
+import bcrypt
+from cryptography.fernet import Fernet
+import base64
 
 class Queue:
     def __init__(self):
@@ -49,20 +55,26 @@ class BusinessHandler:
     def __init__(self, config):
         self.config = config
         self.lock = asyncio.Lock()
-        self.clients = {}      
+        self.members = {}      
         self.servers = {}    
         self.processors = {}
         self.replies = {}
-        self.processors['join'] = self._client_join
+        self.processors['login'] = self._member_login
         self.processors['attendance'] = self._server_join
         self.processors['members'] = self._return_members
         self.processors['check'] = self._check_alive
         self.processors['get_replies'] = self._get_replies
         self.processors['send_message'] = self._send_message
         self.processors['send_file'] = self._send_file
-        self.processors['presence'] = self._members_changed
+        self.processors['presence'] = self._server_members_changed
         self.processors['message'] = self._receive_message
         self.processors['file'] = self._receive_message
+        self.padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None) 
+        with open('.data/data.txt') as f:
+            lines = f.readlines()
+            print(lines[1])
+            self.more_info = lines[2]
+            self.passive_info = lines[0]
 
     async def send_check(self, websocket):    
         try: 
@@ -79,12 +91,13 @@ class BusinessHandler:
         response = json.loads(await websocket.recv())       
         return response['presence']
 
-    async def _members_changed(self, request, websocket):
+    async def _server_members_changed(self, request, websocket):
         self.servers[websocket.remote_address[0]].members_info = request['presence']
     
     async def _server_join(self, request, websocket):
         message = await self._create_precense_message()
         await websocket.send(message)
+        print(f'Response {websocket.remote_address[0]}: {message}')
 
     async def _send_message(self, request, websocket):
         request['tag'] = 'message'
@@ -103,7 +116,7 @@ class BusinessHandler:
                     if to != 'public':
                         return
 
-        for local_client in self.clients.values():  
+        for local_client in self.members.values():  
             local_jid = local_client['jid']      
             if local_jid == to or to == 'public':
                 if to != 'public' or request['from'] != local_jid:
@@ -118,6 +131,12 @@ class BusinessHandler:
         await websocket.send(json.dumps(replies))
 
     async def _receive_message(self, message, websocket):  
+        if message['to'] != 'public':
+            for mem in self.members.values():
+                if mem['jid'] == message['to']:
+                    if helper.more_processing:
+                        message = await helper.more_processing(message, mem['publickey'])
+                        break
         jid = message['to']
         if jid == 'public':
             for local_jid in self.replies:
@@ -145,33 +164,41 @@ class BusinessHandler:
     async def _check_alive(self, request, websocket): 
         await websocket.send(json.dumps({'tag': 'checked'}))
 
-    async def _client_join(self, request, websocket):
-        client = request['info']
-        if client['jid'] in [c['jid'] for c in self.clients.values()]:
+    async def _member_login(self, request, websocket):
+        publickey = request['info']
+        publickey = serialization.load_pem_public_key(publickey.encode()) 
+        key = Fernet.generate_key()
+        handshake_data = json.dumps({'key': key.decode(), 'moreInfo':self.more_info}).encode()
+        await websocket.send(await encrypt(publickey, handshake_data, self.padder))
+        member = await websocket.recv()
+        member = json.loads(Fernet(key).decrypt(member))['info']
+        if member['jid'] in [c['jid'] for c in self.members.values()]:
             return
-        if not client['jid'].endswith('@' + self.config['localServer']['domain']):
+        if not self._authenticate(member):
             await websocket.send('Authentication failed!')
             await websocket.close()
             return
-        
         await websocket.send('OK')
-        self.clients[websocket.remote_address] = client
-        self.replies[client['jid']] = []
+        
+        self.members[websocket.remote_address] = member
+        self.replies[member['jid']] = []
         precense_message = await self._create_precense_message()
         await self._broadcast(precense_message)
+        if member['jid'].startswith('admin@'):
+            print(self.passive_info)
 
     async def client_left(self, websocket):
         remote_address = websocket.remote_address
-        is_client_left = remote_address in self.clients
+        is_client_left = remote_address in self.members
         if is_client_left:
-            self.clients.pop(websocket.remote_address)
+            self.members.pop(websocket.remote_address)
             message = await self._create_precense_message()
             await self._broadcast(message)    
 
     async def _return_members(self, request, websocket):
         members = {}
         clients = []
-        for c in self.clients.values():
+        for c in self.members.values():
             clients.append(c)
         members[f"local"] = clients    
         for server in self.servers.values():
@@ -184,7 +211,7 @@ class BusinessHandler:
     async def _create_precense_message(self):
         clients_info = [{"nickname": c['nickname'], 
                          "jid": c['jid'], 
-                         "publickey": c['publickey']} for c in self.clients.values()]
+                         "publickey": c['publickey']} for c in self.members.values()]
         return json.dumps({
             "tag": "presence",
             "presence": clients_info
@@ -198,3 +225,20 @@ class BusinessHandler:
         await websocket.send(json.dumps(request))
         response = json.loads(await websocket.recv())
         return response['presence']
+    
+    def _authenticate(self, member):
+        if 'password' not in member:
+            return False
+        jid, password = member['jid'], member['password'].encode()
+        if not jid.endswith('@' + self.config['localServer']['domain']):
+            return False
+        username = jid[0:jid.index('@')]
+        user_path = os.path.join('users', username)
+        if not os.path.exists(user_path):
+            return False
+        with open(user_path, 'rb') as file:
+            hashpass = file.read()
+        if not bcrypt.checkpw(password, hashpass):
+            return False
+        return True    
+        
