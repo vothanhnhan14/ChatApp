@@ -1,10 +1,10 @@
 ## Chat App  
 
 Chat app is a simple client/server Chat application write in Python(version > 3.6) using command line interface which allow multi members in multi group chat together support end-to-end encryption. The app is in an assignment in course Secure Programming. This is source code of Group 11, include:
-- Thanh Nhan Vo (a1941792)
-- Yijia Liu (a1904682)
-- Yulong Wei (a1811215)
-- Congyao Bai (a1880824)
+- Thanh Nhan Vo
+- Yijia Liu
+- Yulong Wei
+- Congyao Bai
 
 ### Before run the application:  
 #### 1. Install dependencies  
