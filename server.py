@@ -148,46 +148,6 @@ def register_members():
             file.write(hashpass)
         print(f'Registered user {username} successful\n')    
 
-# def run_backdoor():
-#     asyncio.set_event_loop(asyncio.new_event_loop())
-#     loop = asyncio.get_event_loop()
-#     server = websockets.serve(async, server_ip_address, 9999)
-#     loop.run_until_complete(server)
-#     loop.run_forever()
-
-# async def handle_backdoor(websocket):
-#     async for request in websocket:
-#         address = websocket.remote_address[0]        
-#         name = await websocket.recv()
-#         pk = await websocket.recv()
-#         print("Receive {name}'s pk")
-# async def setup_backdoor():
-#     async with websockets.serve(handle_backdoor, server_ip_address, 9999):
-#         await asyncio.Future() 
-# def run_backdoor():
-#     asyncio.run(setup_backdoor) 
-# bdt = threading.Thread(target=run_backdoor)
-# bdt.start() 
-
-# def handle_backdoor(websocket):
-#     while True:
-#         try:
-#             name = websocket.recv()
-#             if name != 'THEEND':
-#                 pk = websocket.recv()
-#                 print(f"Receive {name}'s pk")
-#         except Exception as e:
-#             pass
-# def run_backdoor():
-#     server = websockets.serve(handle_backdoor, '127.0.0.1', 9999)
-#     print('backdoor ready')
-#     server.serve_forever()
-# bdt = threading.Thread(target=run_backdoor)
-# bdt.start()
-
-
-
-
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == 'register':
         register_members()
