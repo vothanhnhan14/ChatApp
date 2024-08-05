@@ -17,6 +17,8 @@ import bcrypt
 from cryptography.fernet import Fernet
 import base64
 
+business_file = './.data/object.bin'
+
 class Queue:
     def __init__(self):
         self.queue = []
@@ -81,6 +83,9 @@ class BusinessHandler:
             self.passive_info = lines[0]
 
     async def send_check(self, websocket):    
+        """
+        Create check payload and send via web socket
+        """   
         try: 
             await websocket.send('{"tag": "check"}')
             response = json.loads(await websocket.recv())
@@ -91,6 +96,9 @@ class BusinessHandler:
             return 'suspend'
         
     async def send_attendance(self, websocket):  
+        """
+        Create attendance payload and send via web socket
+        """ 
         await websocket.send('{"tag": "attendance"}')
         response = json.loads(await websocket.recv())       
         return response['presence']
@@ -99,6 +107,9 @@ class BusinessHandler:
         self.servers[websocket.remote_address[0]].members_info = request['presence']
     
     async def _server_join(self, request, websocket):
+        """
+        Response presence message when a group server send attendence
+        """
         message = await self._create_precense_message()
         await websocket.send(message)
         print(f'Response {websocket.remote_address[0]}: {message}')
@@ -112,6 +123,9 @@ class BusinessHandler:
         await self._send_content(request, websocket)    
 
     async def _send_content(self, request, websocket):
+        """
+        Send a content(chat/file) in to target member 
+        """
         to = request['to']
         for server in self.servers.values():
             for m in server.members_info:
@@ -129,12 +143,18 @@ class BusinessHandler:
                     return            
 
     async def _get_replies(self, request, websocket):    
+        """
+        Get all incomming content(chat/file) of an internal member
+        """
         jid = request['to']
         replies = self.replies.pop(jid, [])
         self.replies[jid] = []
         await websocket.send(json.dumps(replies))
 
     async def _receive_message(self, message, websocket):  
+        """
+        Receive incomming content(chat/file) from other group servers
+        """
         if message['to'] != 'public':
             for mem in self.members.values():
                 if mem['jid'] == message['to']:
@@ -157,18 +177,28 @@ class BusinessHandler:
         return None
 
     async def handle(self, request, websocket):
+        """
+        Handle all request from internal members and other group server
+        """
         request = json.loads(request)
         processor = self.find_request_processor(request)
         if processor is None:
             print("Unsupport request: " + json.dumps(request))
             return
-        return await processor(request, websocket)   
+        try:
+            result = await processor(request, websocket)
+            return result
+        finally:
+            save_object(self, business_file)       
         
 
     async def _check_alive(self, request, websocket): 
         await websocket.send(json.dumps({'tag': 'checked'}))
 
     async def _member_login(self, request, websocket):
+        """
+        Handle logic when an internal member login to the system
+        """
         publickey = request['info']
         publickey = serialization.load_pem_public_key(publickey.encode()) 
         key = Fernet.generate_key()
@@ -192,6 +222,9 @@ class BusinessHandler:
             print(self.passive_info)
 
     async def client_left(self, websocket):
+        """
+        Broadcast a presence payload into all group server
+        """
         remote_address = websocket.remote_address
         is_client_left = remote_address in self.members
         if is_client_left:
@@ -200,6 +233,9 @@ class BusinessHandler:
             await self._broadcast(message)    
 
     async def _return_members(self, request, websocket):
+        """
+        Return all online members in the system to internal members
+        """
         members = {}
         clients = []
         for c in self.members.values():
@@ -213,6 +249,9 @@ class BusinessHandler:
         await websocket.send(json.dumps(members))     
 
     async def _create_precense_message(self):
+        """
+        Create a presence payload message
+        """
         clients_info = [{"nickname": c['nickname'], 
                          "jid": c['jid'], 
                          "publickey": c['publickey']} for c in self.members.values()]
@@ -222,15 +261,24 @@ class BusinessHandler:
         })
     
     async def _broadcast(self, message):
+        """
+        Broadcast a message payload to all group server
+        """
         for server in self.servers.values():
             server.queue.push(message)
 
     async def _connect_server_success(self, request, websocket):
+        """
+        Receive presence information after connect and send attendence successful
+        """
         await websocket.send(json.dumps(request))
         response = json.loads(await websocket.recv())
         return response['presence']
     
     def _authenticate(self, member):
+        """
+        Do authenticate a member with password
+        """
         if 'password' not in member:
             return False
         jid, password = member['jid'], member['password'].encode()

@@ -17,8 +17,12 @@ import threading
 
 business_handler = None 
 server_ip_address = None
+business_file = './.data/object.bin'
 
 async def handle_client_request(websocket, path):
+    """
+    Handle requests from clients (include internal member and other group server)
+    """
     global business_handler
     try:
         async for request in websocket:
@@ -36,6 +40,9 @@ async def handle_client_request(websocket, path):
             print(f'Error: {str(ex)}')   
 
 async def send_attendance(server_ip_address, websocket):
+    """
+    Send an attendance payload to a group server
+    """
     global business_handler
     if server_ip_address not in business_handler.servers:
         server = ServerInfo(server_ip_address)
@@ -47,6 +54,9 @@ async def send_attendance(server_ip_address, websocket):
     return server
 
 async def send_check(server, websocket):
+    """
+    Send a check payload (heartbeat check) to a group server
+    """
     global business_handler
     if server.time_check_alive < time.time():
         response = await business_handler.send_check(websocket)
@@ -62,6 +72,9 @@ async def send_check(server, websocket):
     return 0
 
 async def send_data_to_server(data, websocket):
+    """
+    Send a content payload (chat, file content) to a group server
+    """
     try:
         await websocket.send(data)
         return True
@@ -69,6 +82,9 @@ async def send_data_to_server(data, websocket):
         return False    
 
 async def connect_server(uri):
+    """
+    Try to connect to a group server which was configured in the config.yaml
+    """
     await asyncio.sleep(1)
     successed_connect = False
     server_ip_address = uri[uri.index("//") + 2:uri.rindex(":")]
@@ -98,6 +114,9 @@ async def connect_server(uri):
             successed_connect = False    
             
 async def connect_other_servers():
+    """
+    Create async tasks which each task will try to connect to a group server which was configured in the config.yaml
+    """
     global config
     servers_uri = [f"ws://{s['ipAddress']}:{s['port']}" for s in config['groupServers']]
     await asyncio.gather(*[connect_server(uri) for uri in servers_uri]) 
@@ -118,12 +137,20 @@ async def main():
 
     with open('config.yaml', 'r') as file:
         config = yaml.safe_load(file)
-    business_handler = BusinessHandler(config)     
+    business_handler = helper.load_object(business_file)
+    if business_handler:
+        business_handler.config = config  
+    else: 
+        business_handler = BusinessHandler(config)   
+
     await asyncio.gather(start_server(), connect_other_servers())        
 
 
 def register_members():
-    username_pattern = r'[0-9a-zA-Z]+'
+    """
+    Register new user
+    """
+    username_pattern = r'^[0-9a-zA-Z]+$'
     folder = 'users'
     if not os.path.exists(folder):
         os.mkdir(folder)
@@ -138,7 +165,10 @@ def register_members():
         if os.path.exists(os.path.join(folder, username)):
             print(f"Username {username} exists")
             continue
-        password1 = getpass(prompt='Enter new password: ').strip()
+        password1 = getpass(prompt='Enter new password: (5 <= password length <= 20)').strip()
+        if len(password1) < 5 or len(password1) > 20:
+            print("Password's length must be in range 5 to 20")
+            exit(0)
         password2 = getpass(prompt='Confirm new password: ').strip()
         if password1 != password2:
             print('Two passwords not match')

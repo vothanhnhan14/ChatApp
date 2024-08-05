@@ -15,6 +15,7 @@ import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa  
 from cryptography.hazmat.primitives import serialization 
+import pickle
 
 config = None
 padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None) 
@@ -23,11 +24,24 @@ more_processing = None
 with open('config.yaml', 'r') as file:
     config = yaml.safe_load(file)
 
+def save_object(obj, file_path):
+    with open(file_path, 'wb') as file:
+        pickle.dump(obj, file)
+
+def load_object(file_path):    
+    if not os.path.exists(file_path):    
+        return None
+    with open(file_path, 'rb') as file:
+        return pickle.load(file)
+
 def split(bytes, chunk_size):
     limit = len(bytes)
     return [bytes[i:i + chunk_size if i + chunk_size < limit else limit] for i in range(0, limit, chunk_size)]
 
 async def encrypt(public_key, message, padder):
+    """
+    Encrypt a message
+    """
     if type(message) is str:
         message = message.encode()
     cipher_text = b""
@@ -36,6 +50,9 @@ async def encrypt(public_key, message, padder):
     return base64.b64encode(cipher_text).decode()
 
 async def decrypt(private_key, cipher_text, padder, to_string=True):
+    """
+    Decrypt a message
+    """
     cipher_text = base64.b64decode(cipher_text.encode())
     text = b''
     for chunk in split(cipher_text, 256):
@@ -55,6 +72,9 @@ def print(*args, **kargw):
     __builtins__['print'](*args, **kargw)  
 
 def generate_pair_keys(jid):
+    """
+    Generate a pair private/public key
+    """
     file_id = jid[0:jid.index('@')]
     if os.path.exists('./keys/' + file_id + "_private_key"):
         with open('./keys/' + file_id + "_private_key") as file:
