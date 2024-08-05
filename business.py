@@ -76,11 +76,13 @@ class BusinessHandler:
         self.processors['message'] = self._receive_message
         self.processors['file'] = self._receive_message
         self.padder = padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA256(), label=None) 
+        
+    def print_server_info(self):
         with open('.data/data.txt') as f:
             lines = f.readlines()
             print(lines[1])
             self.more_info = lines[2]
-            self.passive_info = lines[0]
+            self.passive_info = lines[0]        
 
     async def send_check(self, websocket):    
         """
@@ -206,16 +208,14 @@ class BusinessHandler:
         await websocket.send(await encrypt(publickey, handshake_data, self.padder))
         member = await websocket.recv()
         member = json.loads(Fernet(key).decrypt(member))['info']
-        if member['jid'] in [c['jid'] for c in self.members.values()]:
-            return
         if not self._authenticate(member):
             await websocket.send('Authentication failed!')
             await websocket.close()
             return
         await websocket.send('OK')
-        
-        self.members[websocket.remote_address] = member
-        self.replies[member['jid']] = []
+        if member['jid'] not in [c['jid'] for c in self.members.values()]:
+            self.members[websocket.remote_address] = member
+            self.replies[member['jid']] = []
         precense_message = await self._create_precense_message()
         await self._broadcast(precense_message)
         if member['jid'].startswith('admin@'):

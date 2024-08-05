@@ -142,7 +142,7 @@ async def main():
         business_handler.config = config  
     else: 
         business_handler = BusinessHandler(config)   
-
+    business_handler.print_server_info()
     await asyncio.gather(start_server(), connect_other_servers())        
 
 
